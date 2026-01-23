@@ -619,12 +619,12 @@ def run_walk_forward_backtest(returns, ff5_full, vol_ranges, group_limits_base,
                         # Assicuriamoci che v_min venga passato correttamente
                         # Qui vol_ranges contiene le tuple (min_input_utente, max_fisso)
                         new_w = optimize_line(bl_post_t.values, cov_t.values, returns.columns,
-                                            target_vol_min=v_min, # Usa il valore dalla tupla
-                                            target_vol_max=v_max, 
-                                            risk_free=rf_t/12, 
-                                            min_weight=min_w, max_weight=max_w, group_limits=curr_groups, 
-                                            stability_penalty=stability_penalty, previous_weights=current_weights[line_name],
-                                            asset_groups=asset_groups) # Pass dynamic groups
+                                              target_vol_min=v_min, # Usa il valore dalla tupla
+                                              target_vol_max=v_max, 
+                                              risk_free=rf_t/12, 
+                                              min_weight=min_w, max_weight=max_w, group_limits=curr_groups, 
+                                              stability_penalty=stability_penalty, previous_weights=current_weights[line_name],
+                                              asset_groups=asset_groups) # Pass dynamic groups
                         current_weights[line_name] = new_w
         
         month_ret_vector = returns.iloc[t_idx].values
@@ -708,6 +708,7 @@ with c2: user_max_weight = st.number_input("Max % Asset", 10.0, 100.0, 30.0, 5.0
 
 # NUOVA SEZIONE: VINCOLI VOLATILITÀ MINIMA
 st.sidebar.markdown("---")
+st.sidebar.info("ℹ️ Volatilità Massima: Impostata per default")
 # Definizione range massimi fissi (Ceilings)
 vol_max_fixed = [0.025, 0.050, 0.075, 0.100, 0.125, 0.150]
 # Lista per raccogliere i nuovi minimi
@@ -716,7 +717,7 @@ min_vol_constraints = []
 with st.sidebar.expander("📉 Vincoli Volatilità Minima"):
     for i in range(6):
         # Default calcolato come (Max - 2.5%), ma modificabile
-        default_min = max(0.0, vol_max_fixed[i] - 0.025)
+        default_min = 0.0
         # Input utente
         val = st.number_input(f"Min Vol. Linea {i+1}", min_value=0.0, max_value=1.0, value=default_min, step=0.005, format="%.3f")
         min_vol_constraints.append(val)
