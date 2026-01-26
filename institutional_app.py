@@ -854,7 +854,8 @@ if uploaded_file:
             with st.spinner("Analisi sensitività..."):
                 sensitivity_stability = sensitivity_monte_carlo(bl_posterior.values, cov_lw.values, returns_monthly.columns, n_sim=200)
         
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 STRATEGIC", "📈 BACKTEST", "🧠 MODELS", "🔥 STRESS", "📑 REPORT"])
+        # AGGIUNTO IL NUOVO TAB DI CONFRONTO
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 STRATEGIC", "📈 BACKTEST", "🧠 MODELS", "🔥 STRESS", "📑 REPORT", "⚔️ CONFRONTO"])
         
         with tab1:
             st.markdown("### 🎯 Asset Allocation Ottimale")
@@ -895,6 +896,10 @@ if uploaded_file:
                     user_min_weight, user_max_weight, tx_cost_bps, view_horizon, conf_level, stability_penalty,
                     asset_groups=detected_groups # Usa gruppi dinamici
                 )
+                # SALVATAGGIO IN SESSION STATE PER IL TAB CONFRONTO
+                if wf_df is not None:
+                    st.session_state['wf_result_data'] = wf_df
+            
             if wf_err: st.error(wf_err)
             else:
                 nav_df = (1 + wf_df).cumprod() * 100
@@ -941,6 +946,92 @@ if uploaded_file:
             exec_summary = pd.DataFrame([report_data.get('Executive_Summary', {})]).T
             exec_summary.columns = ['Valore']
             st.table(exec_summary)
+
+        # -----------------------------------------------------------------------------
+        # NUOVO TAB 6: CONFRONTO MANUALE
+        # -----------------------------------------------------------------------------
+        with tab6:
+            st.markdown("### ⚔️ Laboratorio Confronto Strategie")
+            st.info("Qui puoi creare manualmente un portafoglio (statico, ribilanciato mensilmente) e confrontarlo direttamente con una delle Linee generate dal sistema.")
+            
+            # Controlla se i dati del backtest automatico sono disponibili
+            if 'wf_result_data' not in st.session_state:
+                st.warning("⚠️ Per effettuare il confronto, visita prima il Tab '📈 BACKTEST' per generare le linee automatiche.")
+            else:
+                wf_data_ref = st.session_state['wf_result_data']
+                
+                col_manual_input, col_manual_res = st.columns([1, 2])
+                
+                with col_manual_input:
+                    st.markdown("#### 1. Definisci Pesi Manuali")
+                    with st.expander("📝 Inserisci Percentuali Asset", expanded=True):
+                        manual_weights = {}
+                        tot_weight = 0.0
+                        
+                        # Input per ogni asset
+                        for asset in returns_monthly.columns:
+                            # Default 0.0
+                            val = st.number_input(f"{asset} (%)", min_value=0.0, max_value=100.0, value=0.0, step=1.0, key=f"man_w_{asset}")
+                            manual_weights[asset] = val / 100.0
+                            tot_weight += val
+                        
+                        st.markdown("---")
+                        if abs(tot_weight - 100.0) > 0.01:
+                            st.error(f"⚠️ Totale: {tot_weight:.1f}% (Deve essere 100%)")
+                        else:
+                            st.success(f"✅ Totale: {tot_weight:.1f}%")
+                            
+                    st.markdown("#### 2. Scegli Benchmark")
+                    comp_line = st.selectbox("Confronta con:", wf_data_ref.columns)
+                    
+                    run_manual = st.button("🚀 ESEGUI CONFRONTO")
+                
+                with col_manual_res:
+                    if run_manual and abs(tot_weight - 100.0) <= 0.01:
+                        # Calcolo Backtest Manuale (Statico Ribilanciato)
+                        # Allineiamo le date con il backtest automatico
+                        common_idx = wf_data_ref.index
+                        w_vec = np.array([manual_weights[c] for c in returns_monthly.columns])
+                        
+                        # Filtriamo i ritorni storici sulle date del backtest automatico
+                        # Usiamo reindex per sicurezza
+                        subset_returns = returns_monthly.reindex(common_idx).fillna(0)
+                        
+                        # Calcolo rendimento portafoglio manuale
+                        manual_ret_series = subset_returns.dot(w_vec)
+                        manual_ret_series.name = "Portafoglio Manuale"
+                        
+                        # Costruzione DataFrame combinato per il grafico
+                        comp_df = pd.DataFrame({
+                            "Portafoglio Manuale": manual_ret_series,
+                            comp_line: wf_data_ref[comp_line]
+                        })
+                        
+                        # Calcolo NAV
+                        comp_nav = (1 + comp_df).cumprod() * 100
+                        
+                        # Grafico Comparativo
+                        st.markdown(f"#### 🆚 Confronto: Manuale vs {comp_line}")
+                        fig_comp = style_plotly_chart(px.line(comp_nav, labels={"value": "Base 100", "variable": "Strategia"}), "Performance Storica", 450)
+                        st.plotly_chart(fig_comp, use_container_width=True)
+                        
+                        # Tabella Metriche
+                        m_cagr = (comp_nav.iloc[-1] / 100) ** (12 / len(comp_nav)) - 1
+                        m_vol = comp_df.std() * np.sqrt(12)
+                        m_dd = (comp_nav / comp_nav.cummax() - 1).min()
+                        
+                        metrics_comp = pd.DataFrame({
+                            "CAGR": m_cagr,
+                            "Volatilità": m_vol,
+                            "Max DD": m_dd
+                        })
+                        
+                        st.table(metrics_comp.style.format("{:.2%}").background_gradient(cmap="RdYlGn", subset=["CAGR"]))
+                        
+                    elif run_manual:
+                        st.error("Correggi i pesi affinché la somma sia 100%.")
+                    else:
+                        st.info("Inserisci i pesi e premi 'Esegui Confronto'.")
 
     else: st.warning("Errore fattori FF5.")
 else:
