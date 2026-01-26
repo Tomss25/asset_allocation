@@ -948,7 +948,7 @@ if uploaded_file:
             st.table(exec_summary)
 
         # -----------------------------------------------------------------------------
-        # NUOVO TAB 6: CONFRONTO MANUALE
+        # NUOVO TAB 6: CONFRONTO MANUALE (CON FIX ST.FORM)
         # -----------------------------------------------------------------------------
         with tab6:
             st.markdown("### ⚔️ Laboratorio Confronto Strategie")
@@ -964,28 +964,34 @@ if uploaded_file:
                 
                 with col_manual_input:
                     st.markdown("#### 1. Definisci Pesi Manuali")
-                    with st.expander("📝 Inserisci Percentuali Asset", expanded=True):
-                        manual_weights = {}
-                        tot_weight = 0.0
-                        
-                        # Input per ogni asset
-                        for asset in returns_monthly.columns:
-                            # Default 0.0
-                            val = st.number_input(f"{asset} (%)", min_value=0.0, max_value=100.0, value=0.0, step=1.0, key=f"man_w_{asset}")
-                            manual_weights[asset] = val / 100.0
-                            tot_weight += val
-                        
-                        st.markdown("---")
-                        if abs(tot_weight - 100.0) > 0.01:
-                            st.error(f"⚠️ Totale: {tot_weight:.1f}% (Deve essere 100%)")
-                        else:
-                            st.success(f"✅ Totale: {tot_weight:.1f}%")
-                            
-                    st.markdown("#### 2. Scegli Benchmark")
-                    comp_line = st.selectbox("Confronta con:", wf_data_ref.columns)
                     
-                    run_manual = st.button("🚀 ESEGUI CONFRONTO")
-                
+                    # --- INIZIO FIX: Uso di st.form per prevenire refresh automatici ---
+                    with st.form(key="manual_portfolio_form"):
+                        with st.expander("📝 Inserisci Percentuali Asset", expanded=True):
+                            manual_weights = {}
+                            
+                            # Input per ogni asset
+                            for asset in returns_monthly.columns:
+                                # Default 0.0
+                                val = st.number_input(f"{asset} (%)", min_value=0.0, max_value=100.0, value=0.0, step=1.0, key=f"man_w_{asset}")
+                                manual_weights[asset] = val / 100.0
+                        
+                        st.markdown("#### 2. Scegli Benchmark")
+                        comp_line = st.selectbox("Confronta con:", wf_data_ref.columns)
+                        
+                        # Il pulsante ora è un submit button del form
+                        run_manual = st.form_submit_button("🚀 ESEGUI CONFRONTO")
+                    # --- FINE FIX ---
+
+                    # Calcolo totale pesi (post-submit)
+                    tot_weight = sum(manual_weights.values()) * 100
+                    
+                    if run_manual:
+                        if abs(tot_weight - 100.0) > 0.01:
+                             st.error(f"⚠️ Totale: {tot_weight:.1f}% (Deve essere 100%)")
+                        else:
+                             st.success(f"✅ Totale: {tot_weight:.1f}%")
+
                 with col_manual_res:
                     if run_manual and abs(tot_weight - 100.0) <= 0.01:
                         # Calcolo Backtest Manuale (Statico Ribilanciato)
@@ -1027,9 +1033,10 @@ if uploaded_file:
                         })
                         
                         st.table(metrics_comp.style.format("{:.2%}").background_gradient(cmap="RdYlGn", subset=["CAGR"]))
-                        
+                    
                     elif run_manual:
-                        st.error("Correggi i pesi affinché la somma sia 100%.")
+                         # Messaggio già mostrato nell'altra colonna
+                         pass
                     else:
                         st.info("Inserisci i pesi e premi 'Esegui Confronto'.")
 
