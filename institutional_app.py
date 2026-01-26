@@ -522,7 +522,7 @@ def run_stress_tests(weights_dict, historical_returns, asset_groups, scenarios=S
             continue
     return pd.DataFrame(stress_results)
 
-# --- MODIFICA 1: OPTIMIZE_LINE ora accetta un vettore per max_weight ---
+# --- MODIFICA 1: OPTIMIZE_LINE ora accetta vettori per min_weight e max_weight ---
 def optimize_line(mu, cov, asset_names, target_vol_min=None, target_vol_max=None, risk_free=0.0, 
                   min_weight=0.0, max_weight=1.0, group_limits=None, stability_penalty=0.0,
                   previous_weights=None, asset_groups=None):
@@ -549,13 +549,18 @@ def optimize_line(mu, cov, asset_names, target_vol_min=None, target_vol_max=None
             if indices:
                 constraints.append({'type': 'ineq', 'fun': lambda x, idx=indices, l=limit_max: l - np.sum(x[idx])})
     
-    # Gestione Max Weight (Scalare o Vettoriale)
+    # Gestione Min/Max Weight (Scalare o Vettoriale)
     if np.isscalar(max_weight):
         upper_bounds = [max_weight] * num_assets
     else:
-        upper_bounds = max_weight # Assumiamo sia una lista/array allineata
+        upper_bounds = max_weight 
         
-    bounds = tuple((min_weight, upper_bounds[i]) for i in range(num_assets))
+    if np.isscalar(min_weight):
+        lower_bounds = [min_weight] * num_assets
+    else:
+        lower_bounds = min_weight 
+        
+    bounds = tuple((lower_bounds[i], upper_bounds[i]) for i in range(num_assets))
     init_guess = num_assets * [1. / num_assets,]
     try:
         result = minimize(objective, init_guess, args=args, method='SLSQP', bounds=bounds, constraints=constraints, options={'maxiter': 1000, 'ftol': 1e-9})
@@ -583,7 +588,7 @@ def sensitivity_monte_carlo(mu_base, cov_base, asset_names, n_sim=500):
 def run_walk_forward_backtest(returns, ff5_full, vol_ranges, group_limits_base, 
                              equity_limits_per_line, min_w, max_w, tx_cost, 
                              view_window, conf_level, stability_penalty=0.01, asset_groups=None,
-                             asset_specific_limits_map=None): # New param for limits
+                             asset_specific_limits_map=None, asset_specific_limits_min_map=None): # Added min map
     start_idx = max(36, view_window)
     returns = returns.fillna(0)
     if len(returns) <= start_idx: return None, "Storia troppo breve.", None
@@ -623,23 +628,28 @@ def run_walk_forward_backtest(returns, ff5_full, vol_ranges, group_limits_base,
                         curr_groups = group_limits_base.copy()
                         curr_groups["EQUITY"] = equity_limits_per_line.get(line_name, 1.0)
                         
-                        # COSTRUZIONE VETTORE MAX WEIGHT PER QUESTA LINEA NEL BACKTEST
-                        current_max_w_vector = max_w # Default scalare
+                        # COSTRUZIONE VETTORE MAX WEIGHT (Backtest)
+                        current_max_w_vector = max_w 
                         if asset_specific_limits_map:
-                             # Costruisci lista allineata con returns.columns
                              current_max_w_vector = []
                              for asset in returns.columns:
-                                 # Recupera limite specifico se esiste, altrimenti usa max_w globale
                                  user_limit = asset_specific_limits_map.get(asset, {}).get(line_name, 1.0)
-                                 # Il limite effettivo è il minimo tra il limite utente globale e quello specifico
-                                 current_max_w_vector.append(min(max_w, user_limit))
+                                 current_max_w_vector.append(min(max_w, user_limit) if user_limit < 1.0 else max_w)
+                        
+                        # COSTRUZIONE VETTORE MIN WEIGHT (Backtest)
+                        current_min_w_vector = min_w
+                        if asset_specific_limits_min_map:
+                             current_min_w_vector = []
+                             for asset in returns.columns:
+                                 user_limit_min = asset_specific_limits_min_map.get(asset, {}).get(line_name, 0.0)
+                                 current_min_w_vector.append(user_limit_min if user_limit_min > 0.0 else min_w)
 
                         new_w = optimize_line(bl_post_t.values, cov_t.values, returns.columns,
                                                 target_vol_min=v_min, 
                                                 target_vol_max=v_max, 
                                                 risk_free=rf_t/12, 
-                                                min_weight=min_w, 
-                                                max_weight=current_max_w_vector, # Usa vettore calcolato
+                                                min_weight=current_min_w_vector, 
+                                                max_weight=current_max_w_vector,
                                                 group_limits=curr_groups, 
                                                 stability_penalty=stability_penalty, previous_weights=current_weights[line_name],
                                                 asset_groups=asset_groups)
@@ -805,41 +815,59 @@ if uploaded_file:
         # -------------------------------------------------------------
 
     # -------------------------------------------------------------------------
-    # MODIFICA 2: NUOVA SEZIONE SIDEBAR PER LIMITI ASSET SPECIFICI PER LINEA
+    # MODIFICA 2: NUOVA SEZIONE SIDEBAR PER LIMITI ASSET SPECIFICI PER LINEA (MIN & MAX)
     # -------------------------------------------------------------------------
     st.sidebar.markdown("---")
-    with st.sidebar.expander("🎯 Limiti Asset Puntuali (Max %)"):
-        st.info("Seleziona un asset e imposta il peso massimo consentito per ogni singola linea.")
+    with st.sidebar.expander("🎯 Limiti Asset Puntuali"):
+        st.info("Seleziona un asset e imposta i vincoli di peso (Min/Max) per ogni linea.")
         
         # Selectbox per scegliere l'asset da configurare
         selected_asset_for_limit = st.selectbox("Seleziona Asset", sorted(returns_monthly.columns))
         
-        # Contenitore per i limiti specifici (persistente)
+        # --- Contenitore Max Limits ---
         if 'custom_asset_limits' not in st.session_state:
             st.session_state['custom_asset_limits'] = {}
-        
-        # Inizializza struttura per l'asset selezionato se non esiste
         if selected_asset_for_limit not in st.session_state['custom_asset_limits']:
             st.session_state['custom_asset_limits'][selected_asset_for_limit] = {f"Linea {i+1}": 1.0 for i in range(6)}
 
-        # Genera i 6 input per l'asset selezionato
+        # --- Contenitore Min Limits ---
+        if 'custom_asset_limits_min' not in st.session_state:
+            st.session_state['custom_asset_limits_min'] = {}
+        if selected_asset_for_limit not in st.session_state['custom_asset_limits_min']:
+            st.session_state['custom_asset_limits_min'][selected_asset_for_limit] = {f"Linea {i+1}": 0.0 for i in range(6)}
+
+        # Genera i 6 input (Min e Max) per l'asset selezionato
         for i in range(6):
             line_key = f"Linea {i+1}"
-            current_val = st.session_state['custom_asset_limits'][selected_asset_for_limit].get(line_key, 1.0)
             
-            # Input numerico
-            new_val = st.number_input(
-                f"Max {selected_asset_for_limit} in {line_key}", 
-                min_value=0.0, max_value=1.0, value=float(current_val), step=0.05, 
-                format="%.2f",
-                key=f"limit_input_{selected_asset_for_limit}_{i}"
-            )
+            c_min, c_max = st.sidebar.columns(2)
+            
+            # Valori attuali
+            curr_max = st.session_state['custom_asset_limits'][selected_asset_for_limit].get(line_key, 1.0)
+            curr_min = st.session_state['custom_asset_limits_min'][selected_asset_for_limit].get(line_key, 0.0)
+            
+            with c_min:
+                new_min = st.number_input(
+                    f"Min {line_key}", 
+                    min_value=0.0, max_value=1.0, value=float(curr_min), step=0.05, 
+                    format="%.2f",
+                    key=f"min_input_{selected_asset_for_limit}_{i}"
+                )
+            with c_max:
+                new_max = st.number_input(
+                    f"Max {line_key}", 
+                    min_value=0.0, max_value=1.0, value=float(curr_max), step=0.05, 
+                    format="%.2f",
+                    key=f"max_input_{selected_asset_for_limit}_{i}"
+                )
             
             # Aggiorna lo stato
-            st.session_state['custom_asset_limits'][selected_asset_for_limit][line_key] = new_val
+            st.session_state['custom_asset_limits'][selected_asset_for_limit][line_key] = new_max
+            st.session_state['custom_asset_limits_min'][selected_asset_for_limit][line_key] = new_min
 
-    # Recuperiamo la mappa completa dei limiti dal session state per usarla nel calcolo
+    # Recuperiamo le mappe complete dei limiti
     asset_specific_limits_map = st.session_state.get('custom_asset_limits', {})
+    asset_specific_limits_min_map = st.session_state.get('custom_asset_limits_min', {})
     # -------------------------------------------------------------------------
 
 
@@ -870,39 +898,33 @@ if uploaded_file:
                 curr_groups = group_limits_base.copy()
                 curr_groups["EQUITY"] = equity_limits.get(name, 1.0)
                 
-                # --- MODIFICA 3: COSTRUZIONE VETTORE MAX WEIGHT PER OTTIMIZZAZIONE ---
-                # Default globale (Max % Asset dalla sidebar principale)
+                # --- MODIFICA 3: COSTRUZIONE VETTORI MAX E MIN WEIGHT ---
                 global_max = user_max_weight 
+                global_min = user_min_weight
                 
-                # Costruiamo il vettore specifico per questa linea
                 current_max_weights_vector = []
+                current_min_weights_vector = []
+                
                 for asset in returns_monthly.columns:
-                    # Controlla se c'è un limite specifico per questo asset in questa linea
+                    # MAX
                     specific_limit = asset_specific_limits_map.get(asset, {}).get(name, 1.0)
-                    # Il limite reale è il MINIMO tra il limite globale e quello specifico
-                    # (Se l'utente mette globale 30% ma specifico 5%, vince 5%. Se mette specifico 50% ma globale 30%, vince 30%)
-                    # Se si vuole che lo specifico sovrascriva SEMPRE il globale (anche alzandolo), usare solo specific_limit.
-                    # Interpretazione "Brutale": Se ho messo un limite specifico, voglio quello. Ma se ho un cap globale, quello è sicurezza.
-                    # Solitamente lo specifico è più restrittivo. Usiamo min(global, specific) se non è 1.0, altrimenti global.
+                    # Use specific if < 1.0 (override), else global
+                    limit_to_use_max = specific_limit if specific_limit < 1.0 else global_max
+                    current_max_weights_vector.append(limit_to_use_max)
                     
-                    if specific_limit < 1.0:
-                         # Se l'utente ha toccato il limite specifico, usiamo quello (anche se fosse superiore al globale? No, sicurezza prima)
-                         # Facciamo che il limite specifico sovrascrive il globale SOLO SE è esplicitamente settato diverso da 1.0
-                         # E se voglio alzare il limite di un asset sopra il globale? Allora deve vincere lo specifico.
-                         # DECISIONE: Lo specifico vince sul globale se < 1.0. Se 1.0, usa globale.
-                         limit_to_use = specific_limit
-                    else:
-                         limit_to_use = global_max
-                    
-                    current_max_weights_vector.append(limit_to_use)
+                    # MIN
+                    specific_limit_min = asset_specific_limits_min_map.get(asset, {}).get(name, 0.0)
+                    # Use specific if > 0.0 (override), else global
+                    limit_to_use_min = specific_limit_min if specific_limit_min > 0.0 else global_min
+                    current_min_weights_vector.append(limit_to_use_min)
                 # ---------------------------------------------------------------------
 
                 w = optimize_line(bl_posterior.values, cov_lw.values, returns_monthly.columns,
-                                target_vol_min=v_min, # Usa input utente
+                                target_vol_min=v_min, 
                                 target_vol_max=v_max, 
                                 risk_free=rf_rate/12, 
-                                min_weight=user_min_weight, 
-                                max_weight=current_max_weights_vector, # VETTORE DINAMICO
+                                min_weight=current_min_weights_vector, # VETTORE DINAMICO MIN
+                                max_weight=current_max_weights_vector, # VETTORE DINAMICO MAX
                                 group_limits=curr_groups, stability_penalty=stability_penalty,
                                 asset_groups=detected_groups) 
                 
@@ -994,7 +1016,8 @@ if uploaded_file:
                     returns_monthly, ff5_df, vol_ranges, group_limits_base, equity_limits,
                     user_min_weight, user_max_weight, tx_cost_bps, view_horizon, conf_level, stability_penalty,
                     asset_groups=detected_groups, # Usa gruppi dinamici
-                    asset_specific_limits_map=asset_specific_limits_map # Passa i limiti specifici anche al backtest
+                    asset_specific_limits_map=asset_specific_limits_map,
+                    asset_specific_limits_min_map=asset_specific_limits_min_map # Passa anche i minimi
                 )
                 # SALVATAGGIO IN SESSION STATE PER IL TAB CONFRONTO
                 if wf_df is not None:
