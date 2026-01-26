@@ -902,7 +902,21 @@ if uploaded_file:
                 fig = style_plotly_chart(px.bar(plot_df, x="Linea", y="Weight", color="Category", text_auto=".1%"), "Macro Allocation", 400)
                 st.plotly_chart(fig, use_container_width=True)
             with c2:
-                st.dataframe(pd.DataFrame(weights_list).T.style.format("{:.1%}").background_gradient(cmap="Greens", axis=None), height=400, use_container_width=True)
+                weights_df_display = pd.DataFrame(weights_list).T
+                st.dataframe(weights_df_display.style.format("{:.1%}").background_gradient(cmap="Greens", axis=None), height=400, use_container_width=True)
+                
+                # --- NUOVO DOWNLOAD PER PESI ASSET SINGOLI ---
+                csv_weights = weights_df_display.copy()
+                for col in csv_weights.columns:
+                     csv_weights[col] = csv_weights[col].apply(lambda x: f"{x:.2%}")
+                
+                st.download_button(
+                    "📥 Scarica Pesi Asset (CSV)",
+                    csv_weights.to_csv(sep=';', encoding='utf-8-sig'),
+                    "asset_weights.csv",
+                    "text/csv"
+                )
+                # ---------------------------------------------
 
         with tab2:
             st.markdown("### 🕰️ Simulazione Walk-Forward")
