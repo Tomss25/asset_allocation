@@ -948,7 +948,7 @@ if uploaded_file:
             st.table(exec_summary)
 
         # -----------------------------------------------------------------------------
-        # NUOVO TAB 6: CONFRONTO MANUALE (CON FIX ST.FORM)
+        # NUOVO TAB 6: CONFRONTO MANUALE (CON FIX ST.FORM e RENDIMENTO ATTESO)
         # -----------------------------------------------------------------------------
         with tab6:
             st.markdown("### ⚔️ Laboratorio Confronto Strategie")
@@ -1021,18 +1021,26 @@ if uploaded_file:
                         fig_comp = style_plotly_chart(px.line(comp_nav, labels={"value": "Base 100", "variable": "Strategia"}), "Performance Storica", 450)
                         st.plotly_chart(fig_comp, use_container_width=True)
                         
-                        # Tabella Metriche
+                        # --- CALCOLO METRICHE (INCLUSO RENDIMENTO ATTESO) ---
                         m_cagr = (comp_nav.iloc[-1] / 100) ** (12 / len(comp_nav)) - 1
                         m_vol = comp_df.std() * np.sqrt(12)
                         m_dd = (comp_nav / comp_nav.cummax() - 1).min()
                         
+                        # 1. Calcolo Rendimento Atteso (Ex-Ante) per il portafoglio manuale
+                        # bl_posterior contiene i rendimenti attesi mensili per asset (calcolati prima dei tab)
+                        manual_expected_ret = np.dot(w_vec, bl_posterior.values) * 12
+
+                        # 2. Recupero Rendimento Atteso per la linea automatica (già calcolato in metrics_df)
+                        auto_expected_ret = metrics_df.loc[comp_line, "Rendimento"]
+                        
                         metrics_comp = pd.DataFrame({
-                            "CAGR": m_cagr,
-                            "Volatilità": m_vol,
-                            "Max DD": m_dd
+                            "Rendimento Atteso (Ex-Ante)": [manual_expected_ret, auto_expected_ret],
+                            "CAGR (Storico)": m_cagr,
+                            "Volatilità (Storica)": m_vol,
+                            "Max DD (Storico)": m_dd
                         })
                         
-                        st.table(metrics_comp.style.format("{:.2%}").background_gradient(cmap="RdYlGn", subset=["CAGR"]))
+                        st.table(metrics_comp.style.format("{:.2%}").background_gradient(cmap="RdYlGn", subset=["CAGR (Storico)", "Rendimento Atteso (Ex-Ante)"]))
                     
                     elif run_manual:
                          # Messaggio già mostrato nell'altra colonna
