@@ -37,6 +37,7 @@ def check_password():
         st.markdown("<h2 style='text-align: center;'>🔒 Accesso Istituzionale</h2>", unsafe_allow_html=True)
         pwd = st.text_input("Password", type="password", key="password_input")
         if pwd:
+            # Fallback a "admin" se non configurato in secrets
             correct_pwd = st.secrets.get("PASSWORD", "admin") 
             if pwd == correct_pwd:
                 st.session_state["password_correct"] = True
@@ -67,10 +68,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 0. LOGICHE CORE
+# 0. LOGICHE CORE & REGIME DETECTION
 # ---------------------------------------------------------
 
 def auto_classify_assets_initial(asset_names):
+    """Classificazione euristica iniziale basata sul nome."""
     groups = {"BONDS": [], "EQUITY": [], "COMMODITIES": []}
     bond_keywords = ['BOND', 'GOV', 'CORP', 'HY', 'T-BILL', 'TREASURY', 'OBL', 'YIELD', 'AGG', 'MON', 'FI', 'BTP', 'BUND']
     comm_keywords = ['COMM', 'GOLD', 'OIL', 'CMD', 'METAL', 'ENERGY', 'AGRI', 'GLD', 'SLV', 'ETC']
@@ -105,22 +107,19 @@ def detect_market_regime(returns, equity_assets, lookback_trend=6, lookback_vol_
     if not equity_assets:
         return "NEUTRAL", 0, 0
     
-    # Indice sintetico equi-pesato degli asset equity
-    # Gestione slice temporale: usiamo gli ultimi 'lookback' mesi disponibili nel df passato
+    # Slice temporale sicuro
     if len(returns) < lookback_vol_long:
         return "NEUTRAL", 0, 0
 
+    # Indice sintetico equi-pesato degli asset equity
     eq_returns = returns[equity_assets].mean(axis=1)
     eq_index = (1 + eq_returns).cumprod()
     
     # 1. Calcolo Trend (SMA vs Prezzo attuale)
-    # Se il prezzo attuale è sopra la media mobile a X mesi
     sma_long = eq_index.rolling(window=12).mean().iloc[-1]
     sma_short = eq_index.rolling(window=3).mean().iloc[-1]
     
-    # Trend Score: Differenza percentuale tra SMA breve e SMA lunga
-    # > 0: Trend rialzista (SMA breve sopra lunga)
-    # < 0: Trend ribassista
+    # Trend Score: > 0 Trend positivo, < 0 Trend negativo
     trend_score = (sma_short / sma_long) - 1 
     
     # 2. Calcolo Turbolenza (Volatilità recente vs Storica)
@@ -129,9 +128,7 @@ def detect_market_regime(returns, equity_assets, lookback_trend=6, lookback_vol_
     
     turbulence_score = vol_short / vol_long if vol_long > 0 else 1.0
     
-    # 3. MAPPING DEI REGIMI (Soglie Hard-coded per stabilità)
-    # Soglie: Trend=0, Turbolenza=1.1 (10% in più della media storica)
-    
+    # 3. MAPPING DEI REGIMI
     if trend_score > 0 and turbulence_score < 1.1:
         regime = "ESPANSIONE" 
     elif trend_score > 0 and turbulence_score >= 1.1:
@@ -147,7 +144,6 @@ def get_regime_constraints(regime, max_equity_base, max_bond_base):
     """
     Definisce come cambiano i vincoli per ogni regime.
     """
-    # Default (Neutrale / Strategico)
     constraints = {
         "equity_max": max_equity_base,
         "bond_min": 0.0,
@@ -187,6 +183,7 @@ def process_uploaded_data(uploaded_file):
     try:
         uploaded_file.seek(0)
         df = pd.read_csv(uploaded_file, sep=None, engine='python', index_col=0, parse_dates=True, dayfirst=True)
+        # Pulizia numeri
         for col in df.columns:
             if df[col].dtype == object:
                 df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce')
@@ -194,7 +191,7 @@ def process_uploaded_data(uploaded_file):
         df_monthly = df.resample('ME').last()
         returns = df_monthly.pct_change().dropna(how='all').fillna(0)
         
-        # Winsorization
+        # Winsorization (1% - 99%)
         lower = returns.quantile(0.01)
         upper = returns.quantile(0.99)
         returns = returns.clip(lower, upper, axis=1)
@@ -227,7 +224,7 @@ def calculate_ff5_views(returns, ff5_data, window=60):
     views = {}
     models = {}
     
-    # Momentum Calculation
+    # Momentum Calculation (12-1 months)
     mom_scores = {}
     if len(returns) > 13:
         mom_raw = (1 + returns.iloc[-13:-1]).prod() - 1
@@ -238,7 +235,9 @@ def calculate_ff5_views(returns, ff5_data, window=60):
             model = sm.OLS(data[asset] - data['RF'], X).fit()
             models[asset] = model
             factors_mean = data[['MKT_RF','SMB','HML','RMW','CMA']].mean()
+            # Rendimento atteso base Fama-French
             exp_ret = data['RF'].mean() + model.params['const'] + (model.params[['MKT_RF','SMB','HML','RMW','CMA']] * factors_mean).sum()
+            # Momentum Tilt
             tilt = mom_scores.get(asset, 0) * 0.05
             views[asset] = exp_ret + tilt
         except:
@@ -270,20 +269,23 @@ def black_litterman(cov, prior, views, confidences, conf_level=0.5):
     return pd.Series(post_ret, index=cov.columns)
 
 def optimize_portfolio(mu, cov, target_vol, risk_free, min_w, max_w, group_constraints, groups):
+    # FIX: mu deve essere una Series per avere .index
     num_assets = len(mu)
-    def objective(w): return -np.dot(w, mu)
+    def objective(w): return -np.dot(w, mu.values)
     
     constraints = [
         {'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
         {'type': 'eq', 'fun': lambda x: np.sqrt(np.dot(x.T, np.dot(cov, x))) * np.sqrt(12) - target_vol}
     ]
     
+    # Vincoli Gruppo Max
     for group_name, max_val in group_constraints.get('max', {}).items():
         assets = groups.get(group_name, [])
         indices = [i for i, col in enumerate(mu.index) if col in assets]
         if indices:
             constraints.append({'type': 'ineq', 'fun': lambda x, idx=indices, m=max_val: m - np.sum(x[idx])})
 
+    # Vincoli Gruppo Min
     for group_name, min_val in group_constraints.get('min', {}).items():
         assets = groups.get(group_name, [])
         indices = [i for i, col in enumerate(mu.index) if col in assets]
@@ -304,19 +306,15 @@ def optimize_portfolio(mu, cov, target_vol, risk_free, min_w, max_w, group_const
 # ---------------------------------------------------------
 def run_comparative_backtest(returns, ff5_full, groups, vol_target, max_eq_base, max_bond_base, min_w, max_w):
     """
-    Esegue un backtest walk-forward confrontando Strategico vs Tattico (Dynamic Regime).
+    Esegue un backtest walk-forward confrontando Strategico vs Tattico.
     """
     start_idx = 36
-    rebalance_freq = 3 # Trimestrale per velocità
+    rebalance_freq = 3 # Trimestrale
     
     dates = returns.index[start_idx::rebalance_freq]
-    history = []
     
-    # Init Weights
+    # Init Tracking
     n_assets = len(returns.columns)
-    w_strat = np.full(n_assets, 1/n_assets)
-    w_tact = np.full(n_assets, 1/n_assets)
-    
     wealth_strat = 100.0
     wealth_tact = 100.0
     
@@ -352,7 +350,8 @@ def run_comparative_backtest(returns, ff5_full, groups, vol_target, max_eq_base,
             'max': {'EQUITY': max_eq_base, 'BONDS': max_bond_base, 'COMMODITIES': 0.3},
             'min': {}
         }
-        w_strat = optimize_portfolio(bl_ret.values, cov.values, vol_target, 0.02, min_w, max_w, cons_strat, groups)
+        # FIX: Passo bl_ret (Series) e NON bl_ret.values
+        w_strat = optimize_portfolio(bl_ret, cov.values, vol_target, 0.02, min_w, max_w, cons_strat, groups)
         
         # 5. Optimize TACTICAL (Dynamic Constraints)
         regime_params = get_regime_constraints(regime, max_eq_base, max_bond_base)
@@ -360,9 +359,9 @@ def run_comparative_backtest(returns, ff5_full, groups, vol_target, max_eq_base,
             'max': {'EQUITY': regime_params['equity_max'], 'BONDS': 1.0, 'COMMODITIES': 1.0},
             'min': {'BONDS': regime_params['bond_min'], 'COMMODITIES': regime_params.get('comm_min', 0)}
         }
-        # Tattico adegua anche il target volatility
         vol_tact = vol_target * regime_params['vol_mult']
-        w_tact = optimize_portfolio(bl_ret.values, cov.values, vol_tact, 0.02, min_w, max_w, cons_tact, groups)
+        # FIX: Passo bl_ret (Series) e NON bl_ret.values
+        w_tact = optimize_portfolio(bl_ret, cov.values, vol_tact, 0.02, min_w, max_w, cons_tact, groups)
         
         # 6. Performance Simulation (Next Period)
         if i < len(dates) - 1:
@@ -386,7 +385,6 @@ def run_comparative_backtest(returns, ff5_full, groups, vol_target, max_eq_base,
 
     progress_bar.empty()
     
-    # Create DataFrame
     df_perf = pd.DataFrame({
         'Strategico': ts_strat,
         'Tattico': ts_tact
@@ -459,7 +457,8 @@ if uploaded_file:
                 
                 for v_tgt, name in zip(vol_targets, line_names):
                     grp_con = {'max': {'EQUITY': max_equity_base, 'BONDS': max_bonds_base, 'COMMODITIES': 0.3}, 'min': {}}
-                    w = optimize_portfolio(bl_returns.values, cov_matrix.values, v_tgt, 0.02, user_min_w, user_max_w, grp_con, final_groups)
+                    # FIX: Passo bl_returns (Series) per mantenere l'indice
+                    w = optimize_portfolio(bl_returns, cov_matrix.values, v_tgt, 0.02, user_min_w, user_max_w, grp_con, final_groups)
                     strategic_weights[name] = pd.Series(w, index=returns.columns)
                     ret = np.dot(w, bl_returns.values) * 12
                     vol = np.sqrt(np.dot(w.T, np.dot(cov_matrix.values, w))) * np.sqrt(12)
@@ -538,7 +537,8 @@ if uploaded_file:
                                 'max': {'EQUITY': rp['equity_max'], 'BONDS': 1.0, 'COMMODITIES': 1.0},
                                 'min': {'BONDS': rp.get('bond_min', 0), 'COMMODITIES': rp.get('comm_min', 0)}
                             }
-                            w_tac = optimize_portfolio(bl_returns.values, cov_matrix.values, v_tgt * rp['vol_mult'], 0.02, user_min_w, user_max_w, cons_tact, final_groups)
+                            # FIX: Passo bl_returns (Series) per mantenere l'indice
+                            w_tac = optimize_portfolio(bl_returns, cov_matrix.values, v_tgt * rp['vol_mult'], 0.02, user_min_w, user_max_w, cons_tact, final_groups)
                             ret_t = np.dot(w_tac, bl_returns.values) * 12
                             vol_t = np.sqrt(np.dot(w_tac.T, np.dot(cov_matrix.values, w_tac))) * np.sqrt(12)
                             tactical_metrics.append([name, ret_t, vol_t])
