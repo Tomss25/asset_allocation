@@ -861,10 +861,26 @@ if uploaded_file:
             st.markdown("### 🎯 Asset Allocation Ottimale")
             c1, c2 = st.columns([2, 1])
             with c1:
+                # Tabella visualizzata (stile)
                 st.table(metrics_df.style.format({
                     "Rendimento": "{:.2%}", "Volatilità": "{:.2%}", "Sharpe": "{:.2f}",
                     "BONDS": "{:.1%}", "EQUITY": "{:.1%}", "COMM": "{:.1%}"
                 }).background_gradient(cmap="Greens", subset=["Rendimento", "Sharpe"]))
+                
+                # --- MODIFICA DOWNLOAD CSV (FORMATTATO) ---
+                csv_strat = metrics_df.copy()
+                for col in ["Rendimento", "Volatilità", "BONDS", "EQUITY", "COMM"]:
+                     csv_strat[col] = csv_strat[col].apply(lambda x: f"{x:.2%}")
+                csv_strat["Sharpe"] = csv_strat["Sharpe"].apply(lambda x: f"{x:.2f}")
+                
+                st.download_button(
+                    "📥 Scarica Tabella Strategica (CSV)",
+                    csv_strat.to_csv(sep=';', encoding='utf-8-sig'),
+                    "strategic_allocation.csv",
+                    "text/csv"
+                )
+                # ------------------------------------------
+
             with c2:
                 sensitivity_df = pd.DataFrame({'Asset': returns_monthly.columns, 'Stability Score': 1 - (sensitivity_stability / sensitivity_stability.max())}).sort_values('Stability Score', ascending=False)
                 fig_sens = style_plotly_chart(px.bar(sensitivity_df, x='Asset', y='Stability Score', color='Stability Score', color_continuous_scale='RdYlGn'), "", 350)
@@ -912,6 +928,20 @@ if uploaded_file:
                 
                 perf_table = pd.DataFrame({"Linea": list(wf_df.columns), "CAGR": [cagr[c] for c in wf_df.columns], "Volatilità": [vol_real[c] for c in wf_df.columns], "Max DD": [max_dd[c] for c in wf_df.columns]}).set_index("Linea")
                 st.table(perf_table.style.format("{:.2%}").background_gradient(cmap="RdYlGn", subset=["CAGR"]))
+                
+                # --- MODIFICA DOWNLOAD CSV (FORMATTATO) ---
+                csv_perf = perf_table.copy()
+                for col in csv_perf.columns:
+                     csv_perf[col] = csv_perf[col].apply(lambda x: f"{x:.2%}")
+                
+                st.download_button(
+                    "📥 Scarica Performance Backtest (CSV)",
+                    csv_perf.to_csv(sep=';', encoding='utf-8-sig'),
+                    "backtest_performance.csv",
+                    "text/csv"
+                )
+                # ------------------------------------------
+
                 fig_bt = style_plotly_chart(px.line(nav_df, labels={"value": "Base 100", "variable": ""}), "Crescita Capitale", 500)
                 st.plotly_chart(fig_bt, use_container_width=True)
                 with st.expander("📉 Analisi Drawdown"):
@@ -936,6 +966,20 @@ if uploaded_file:
                 if not stress_results.empty:
                     stress_pivot = stress_results.pivot_table(index='Scenario', columns='Linea', values='Rendimento Totale', aggfunc='mean')
                     st.dataframe(stress_pivot.style.format("{:.2%}").background_gradient(cmap="RdYlGn", vmin=-0.3, vmax=0.1), use_container_width=True)
+                    
+                    # --- MODIFICA DOWNLOAD CSV (FORMATTATO) ---
+                    csv_stress = stress_pivot.copy()
+                    for col in csv_stress.columns:
+                         csv_stress[col] = csv_stress[col].apply(lambda x: f"{x:.2%}")
+                    
+                    st.download_button(
+                        "📥 Scarica Stress Test (CSV)",
+                        csv_stress.to_csv(sep=';', encoding='utf-8-sig'),
+                        "stress_test_results.csv",
+                        "text/csv"
+                    )
+                    # ------------------------------------------
+
                     fig_stress = style_plotly_chart(px.bar(stress_results, x='Scenario', y='Rendimento Totale', color='Linea', barmode='group'), "Performance Crisi", 450)
                     st.plotly_chart(fig_stress, use_container_width=True)
             else: st.info("Abilita Stress Tests nella sidebar.")
@@ -1041,6 +1085,19 @@ if uploaded_file:
                         })
                         
                         st.table(metrics_comp.style.format("{:.2%}").background_gradient(cmap="RdYlGn", subset=["CAGR (Storico)", "Rendimento Atteso (Ex-Ante)"]))
+
+                        # --- MODIFICA DOWNLOAD CSV (FORMATTATO) ---
+                        csv_comp = metrics_comp.copy()
+                        for col in csv_comp.columns:
+                             csv_comp[col] = csv_comp[col].apply(lambda x: f"{x:.2%}")
+                        
+                        st.download_button(
+                            "📥 Scarica Confronto (CSV)",
+                            csv_comp.to_csv(sep=';', encoding='utf-8-sig'),
+                            "comparative_analysis.csv",
+                            "text/csv"
+                        )
+                        # ------------------------------------------
                     
                     elif run_manual:
                          # Messaggio già mostrato nell'altra colonna
