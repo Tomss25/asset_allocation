@@ -836,34 +836,38 @@ if uploaded_file:
         if selected_asset_for_limit not in st.session_state['custom_asset_limits_min']:
             st.session_state['custom_asset_limits_min'][selected_asset_for_limit] = {f"Linea {i+1}": 0.0 for i in range(6)}
 
-        # Genera i 6 input (Min e Max) per l'asset selezionato
-        for i in range(6):
-            line_key = f"Linea {i+1}"
-            
-            c_min, c_max = st.sidebar.columns(2)
-            
-            # Valori attuali
-            curr_max = st.session_state['custom_asset_limits'][selected_asset_for_limit].get(line_key, 1.0)
-            curr_min = st.session_state['custom_asset_limits_min'][selected_asset_for_limit].get(line_key, 0.0)
-            
-            with c_min:
-                new_min = st.number_input(
-                    f"Min {line_key}", 
-                    min_value=0.0, max_value=1.0, value=float(curr_min), step=0.05, 
-                    format="%.2f",
-                    key=f"min_input_{selected_asset_for_limit}_{i}"
-                )
-            with c_max:
-                new_max = st.number_input(
-                    f"Max {line_key}", 
-                    min_value=0.0, max_value=1.0, value=float(curr_max), step=0.05, 
-                    format="%.2f",
-                    key=f"max_input_{selected_asset_for_limit}_{i}"
-                )
-            
-            # Aggiorna lo stato
-            st.session_state['custom_asset_limits'][selected_asset_for_limit][line_key] = new_max
-            st.session_state['custom_asset_limits_min'][selected_asset_for_limit][line_key] = new_min
+        # --- SUB-EXPANDER PER NASCONDERE GLI INPUT ---
+        with st.sidebar.expander(f"⚙️ Configura {selected_asset_for_limit}", expanded=False):
+            # Genera i 6 input (Min e Max) per l'asset selezionato
+            for i in range(6):
+                line_key = f"Linea {i+1}"
+                
+                c_min, c_max = st.columns(2)
+                
+                # Valori attuali
+                curr_max = st.session_state['custom_asset_limits'][selected_asset_for_limit].get(line_key, 1.0)
+                curr_min = st.session_state['custom_asset_limits_min'][selected_asset_for_limit].get(line_key, 0.0)
+                
+                with c_min:
+                    new_min = st.number_input(
+                        f"Min {line_key}", 
+                        min_value=0.0, max_value=1.0, value=float(curr_min), step=0.05, 
+                        format="%.2f",
+                        key=f"min_input_{selected_asset_for_limit}_{i}"
+                    )
+                with c_max:
+                    new_max = st.number_input(
+                        f"Max {line_key}", 
+                        min_value=0.0, max_value=1.0, value=float(curr_max), step=0.05, 
+                        format="%.2f",
+                        key=f"max_input_{selected_asset_for_limit}_{i}"
+                    )
+                
+                # Aggiorna lo stato solo se cambiato per evitare reset involontari
+                if new_max != curr_max:
+                    st.session_state['custom_asset_limits'][selected_asset_for_limit][line_key] = new_max
+                if new_min != curr_min:
+                    st.session_state['custom_asset_limits_min'][selected_asset_for_limit][line_key] = new_min
 
     # Recuperiamo le mappe complete dei limiti
     asset_specific_limits_map = st.session_state.get('custom_asset_limits', {})
